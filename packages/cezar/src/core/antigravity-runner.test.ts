@@ -98,6 +98,50 @@ describe('Antigravity runner', () => {
     next.interrupt();
     await first.result; expect((await next.result).text).toBe(''); expect(next.pid).toBeUndefined();
   });
+  it.each([undefined, '', 'true'])('requires explicit opt-in when CEZ_ANTIGRAVITY is %s', async value => {
+    vi.stubEnv('CEZ_ANTIGRAVITY', value);
+    const bin = await script(success);
+    expect(() => new AntigravityRunner({ bin }).startSession({ cwd: tmpdir(), userPrompt: 'test' })).toThrow('CEZ_ANTIGRAVITY');
+  });
+  it.each([undefined, '', '   '])('omits an absent or blank model (%s)', model => {
+    expect(buildAntigravityArgs({ cwd: tmpdir(), userPrompt: 'test', model })).toEqual([
+      '--output-format', 'stream-json', '--dangerously-skip-permissions', '-p', 'test',
+    ]);
+  });
+  it.each([false, true])('passes the conversation to the process only when resuming (%s)', async resume => {
+    vi.stubEnv('CEZ_ANTIGRAVITY', '1');
+    const bin = await script(`console.log(JSON.stringify({event:'result',result:{status:'SUCCESS',response:JSON.stringify(process.argv.slice(2))}}));`);
+    const result = await new AntigravityRunner({ bin }).run({ cwd: tmpdir(), userPrompt: 'quoted "prompt"', resume, sessionId: 'previous' });
+    const argv: string[] = JSON.parse(result.text);
+    expect(argv.includes('--conversation')).toBe(resume);
+    if (resume) expect(argv[argv.indexOf('--conversation') + 1]).toBe('previous');
+    expect(argv.at(-1)).toBe('quoted "prompt"');
+  });
+  it('ignores a malformed line while preserving the next valid result', async () => {
+    vi.stubEnv('CEZ_ANTIGRAVITY', '1');
+    const bin = await script(`console.log('not json');${success}`);
+    await expect(new AntigravityRunner({ bin }).run({ cwd: tmpdir(), userPrompt: 'test' })).resolves.toMatchObject({ text: 'ok', tokensUsed: 3 });
+  });
+  it('preserves stderr diagnostics when a process exits without a result', async () => {
+    vi.stubEnv('CEZ_ANTIGRAVITY', '1');
+    const bin = await script(`console.error('quota exhausted');process.exitCode=17;`);
+    await expect(new AntigravityRunner({ bin }).run({ cwd: tmpdir(), userPrompt: 'test' })).rejects.toThrow('Antigravity exited without a successful result (code 17): quota exhausted');
+  });
+  it('does not interpret informational stderr as a failed successful result', async () => {
+    vi.stubEnv('CEZ_ANTIGRAVITY', '1');
+    const bin = await script(`console.error('loading model');${success}`);
+    await expect(new AntigravityRunner({ bin }).run({ cwd: tmpdir(), userPrompt: 'test' })).resolves.toMatchObject({ text: 'ok' });
+  });
+  it('uses CEZ_AGY_BIN when no explicit binary was supplied', async () => {
+    vi.stubEnv('CEZ_ANTIGRAVITY', '1');
+    vi.stubEnv('CEZ_AGY_BIN', await script(success));
+    await expect(new AntigravityRunner().run({ cwd: tmpdir(), userPrompt: 'test' })).resolves.toMatchObject({ sessionId: 'conversation' });
+  });
+  it('prefers an explicit binary over CEZ_AGY_BIN', async () => {
+    vi.stubEnv('CEZ_ANTIGRAVITY', '1'); vi.stubEnv('CEZ_AGY_BIN', '/do/not/spawn');
+    const bin = await script(success);
+    await expect(new AntigravityRunner({ bin }).run({ cwd: tmpdir(), userPrompt: 'test' })).resolves.toMatchObject({ text: 'ok' });
+  });
   it('discovers account-specific model slugs without importing prose as models', () => {
     expect(parseAntigravityModelsOutput('Fetching available models...\ngemini-custom-high\tGemini Custom\nclaude-custom\tClaude Custom\n')).toEqual([
       { id: 'gemini-custom-high', label: 'Gemini Custom', description: '' },

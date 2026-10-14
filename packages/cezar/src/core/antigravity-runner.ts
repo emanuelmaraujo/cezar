@@ -145,7 +145,7 @@ export class AntigravityRunner implements AgentRunner {
         if (authRequired) throw new Error('Antigravity authentication required. Run agy in a terminal and sign in.');
         if (timedOut) throw new Error(`Antigravity timed out after ${timeoutMs}ms`);
         if (!stopped && streamError) throw new Error(streamError);
-        if (!stopped && (code !== 0 || !state.finished)) throw new Error(`Antigravity exited without a successful result (code ${code})`);
+        if (!stopped && (code !== 0 || !state.finished)) throw new Error(`Antigravity exited without a successful result (code ${code})${stderr.trim() ? `: ${stderr.trim()}` : ''}`);
         if (!state.finished) map({ event: 'result', result: { status: 'CANCELED' } });
         opts.onUiEvent?.({ type: 'session.ended', reason: stopped ? 'cancelled' : 'end_turn' });
         emit({ type: 'done' });
