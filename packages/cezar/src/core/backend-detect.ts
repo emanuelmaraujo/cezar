@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolveCursorAgentBin } from './cursor-agent-runner.ts';
+import { ANTIGRAVITY_OPT_IN_HINT, antigravityEnabled, resolveAntigravityBin } from './antigravity-runner.ts';
 import { resolveClaudeBin } from './claude-bin.ts';
 
 const exec = promisify(execFile);
 
 export interface BackendCheck {
-  name: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'junie' | 'copilot' | 'gh' | 'git';
+  name: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'junie' | 'copilot' | 'antigravity' | 'gh' | 'git';
   available: boolean;
   version?: string;
   hint?: string;
@@ -27,6 +28,7 @@ export async function detectEnvironment(): Promise<BackendCheck[]> {
     probeCursor(),
     probePi(),
     probeJunie(),
+    probeAntigravity(),
     probeCopilot(),
     probeGh(),
     probeGit(),
@@ -185,6 +187,33 @@ async function probeJunie(): Promise<BackendCheck> {
       name: 'junie',
       available: false,
       hint: 'optional: install Junie (https://junie.jetbrains.com/cli) and log in to use the Junie runner',
+    };
+  }
+}
+
+async function probeAntigravity(): Promise<BackendCheck> {
+  // Dry-run stands the runner up on the shared mock, so report it present.
+  if (process.env.CEZ_DRY_RUN === '1') {
+    return { name: 'antigravity', available: true, version: 'mock (CEZ_DRY_RUN=1)' };
+  }
+  if (!antigravityEnabled()) {
+    return { name: 'antigravity', available: false, hint: ANTIGRAVITY_OPT_IN_HINT };
+  }
+  const bin = resolveAntigravityBin();
+  try {
+    // `--version` needs no login and no network — the auth state is provider-auth.ts's job.
+    const { stdout } = await exec(bin, ['--version'], { timeout: 10_000 });
+    return {
+      name: 'antigravity',
+      available: true,
+      version: stdout.trim() || 'installed',
+      hint: 'if not authenticated, run `agy` once and sign in with your Google account',
+    };
+  } catch {
+    return {
+      name: 'antigravity',
+      available: false,
+      hint: 'optional: install the Antigravity CLI (curl -fsSL https://antigravity.google/cli/install.sh | bash) and sign in with `agy`',
     };
   }
 }
