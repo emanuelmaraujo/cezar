@@ -392,6 +392,7 @@ const DESCRIPTORS: readonly ProviderDescriptor[] = [
   },
   {
     id: 'antigravity',
+    overrideEnv: 'CEZ_AGY_BIN',
     executable: () => process.env.CEZ_AGY_BIN ?? 'agy',
     // `agy models` needs a session and exits 1 with "Please sign in…" without one (agy 1.3.3), in
     // under a second and without prompting — the cheapest definitive signed-in check the CLI has.
