@@ -31,6 +31,7 @@ import { isSubmitShortcut } from '@/lib/use-submit-shortcut'
 import { cn } from '@/lib/utils'
 
 import {
+  appendAttachment,
   attachedBytes,
   fileToPendingAttachment,
   MAX_ATTACHMENTS,
@@ -349,7 +350,7 @@ export function Composer({
       for (const reason of intake.rejected) toast(reason, { tone: 'danger' })
       for (const file of intake.accepted) {
         void fileToPendingAttachment(file, source).then((attachment) =>
-          setImages((prev) => (prev.length >= MAX_ATTACHMENTS ? prev : [...prev, attachment])),
+          setImages((prev) => appendAttachment(prev, attachment) ?? prev),
         )
       }
     },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  appendAttachment,
   attachmentMediaType,
   fileToPendingAttachment,
   MAX_ATTACHMENT_BYTES,
@@ -110,6 +111,26 @@ describe('screenFiles — the caps, mirrored from the server zod', () => {
   it('an unnamed paste still reads humanly in the rejection', () => {
     const intake = screenFiles([fakeFile({ name: '', size: MAX_ATTACHMENT_BYTES + 1 })], 0)
     expect(intake.rejected).toEqual(['attachment is too large (max 5 MB)'])
+  })
+})
+
+/** The async append re-applies both caps: encodes from an earlier drop land after `screenFiles`
+ *  screened the next one against a snapshot that did not include them. */
+describe('appendAttachment', () => {
+  const att = (bytes: number) => ({ data: 'A'.repeat(Math.ceil(bytes / 3) * 4) })
+
+  it('appends within both caps', () => {
+    expect(appendAttachment([att(3)], att(3))).toHaveLength(2)
+  })
+
+  it('refuses past the count cap', () => {
+    expect(appendAttachment(Array.from({ length: MAX_ATTACHMENTS }, () => att(3)), att(3))).toBeNull()
+  })
+
+  it('refuses past the 20 MB total', () => {
+    const full = Array.from({ length: 4 }, () => att(MAX_ATTACHMENT_BYTES - 2))
+    expect(appendAttachment(full, att(3))).toHaveLength(5)
+    expect(appendAttachment(full, att(30))).toBeNull()
   })
 })
 

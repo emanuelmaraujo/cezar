@@ -28,6 +28,14 @@ export function attachedBytes(attachments: readonly Pick<AttachmentInput, 'data'
   return attachments.reduce((n, a) => n + Math.floor((a.data.length * 3) / 4), 0)
 }
 
+/** The async append's re-check: `screenFiles` ran against a snapshot, and encodes still in flight
+ *  from an earlier drop are not in it — so both caps are re-applied to the list as it now is. */
+export function appendAttachment<T extends Pick<AttachmentInput, 'data'>>(prev: readonly T[], next: T): T[] | null {
+  if (prev.length >= MAX_ATTACHMENTS) return null
+  if (attachedBytes(prev) + attachedBytes([next]) > MAX_ATTACHMENTS_TOTAL_BYTES) return null
+  return [...prev, next]
+}
+
 /** Extension → media type for a file whose own `type` is empty or unrecognised. `.log` is here
  *  because `text/plain` is what the allowlist takes, and a log the browser typed as `text/plain`
  *  is accepted either way — the fallback only decides the TYPELESS case. */
