@@ -939,7 +939,8 @@ export function sanitizeAttachmentName(name: string, mediaType: string): string 
 }
 
 /**
- * One inline attachment, base64 — ≤4 per request, ~5 MB each once decoded.
+ * One inline attachment, base64 — ~5 MB each once decoded; a request carries an
+ * `attachmentListSchema` of them.
  *
  * An image rides along as a block the model can view; a file (#950) is written to the run's
  * attachment folder and reaches the agent as a PATH only, which is the form its file tools want,
@@ -960,6 +961,22 @@ export const attachmentInputSchema = z.object({
   name: z.string().max(255).optional(),
 });
 export type AttachmentInput = z.input<typeof attachmentInputSchema>;
+
+/** Attachments per message. Ten, not four (telemetry 7054e5f2): five ordinary screenshots were
+ *  refused although they weighed a fraction of the byte budget below, which is the real bound. */
+export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
+
+/** Base64 characters across one message's attachments — the old 4 × ~7 MB ceiling, so the body
+ *  still fits the server's 32 MiB global limit however the bytes are split. */
+export const MAX_ATTACHMENTS_TOTAL_BASE64 = 28_000_000;
+
+/** One message's attachments: bounded by count AND by total size. */
+export const attachmentListSchema = z
+  .array(attachmentInputSchema)
+  .max(MAX_ATTACHMENTS_PER_MESSAGE)
+  .refine((list) => list.reduce((n, a) => n + a.data.length, 0) <= MAX_ATTACHMENTS_TOTAL_BASE64, {
+    message: 'attachments too large — 20 MB in total per message',
+  });
 
 /** @deprecated Attachments are no longer images only — use `attachmentInputSchema`. Kept because
  *  the `images` key it validates is the wire contract and did not change name. */
@@ -1007,7 +1024,7 @@ export const createRunInputBaseSchema = z
     /** Attachments pasted into the new-task form — screenshots, and since #950 PDF/TXT/MD files
      *  too; delivered with the first agent step. The key keeps its name: the wire contract widened
      *  in place rather than growing a second list. */
-    images: z.array(attachmentInputSchema).max(4).optional(),
+    images: attachmentListSchema.optional(),
     /** The inbox entry this task came from (#374). Best-effort bookkeeping: an unknown or
      *  already-started id never fails the run. For ×2/×3 the FIRST variant is recorded. */
     todoId: z.string().min(1).max(200, 'must be at most 200 characters').optional(),
@@ -1037,7 +1054,7 @@ export type CreateRunInput = z.input<typeof createRunInputSchema>;
 export const messageInputSchema = z
   .object({
     text: z.string().max(100_000).default(''),
-    images: z.array(attachmentInputSchema).max(4).default([]),
+    images: attachmentListSchema.default([]),
   })
   .refine((m) => m.text.trim().length > 0 || m.images.length > 0, {
     message: 'message needs text or at least one attachment',

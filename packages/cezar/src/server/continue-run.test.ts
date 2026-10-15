@@ -8,6 +8,7 @@ import { RunStore } from '../runs/store.ts';
 import type { RunManager } from '../workflows/run.ts';
 import { apiRequest } from './loopback-request.testkit.ts';
 import { createApp } from './server.ts';
+import { MAX_ATTACHMENTS_PER_MESSAGE, MAX_ATTACHMENTS_TOTAL_BASE64 } from '@open-mercato/cezar-contract';
 
 /**
  * `POST /api/v1/runs/:id/continue` runner/model override (#401) — the follow-up composer lets the
@@ -137,8 +138,19 @@ describe('POST /api/v1/runs/:id/continue override', () => {
     // Since #950 the follow-up composer takes PDF/TXT/MD too — the refusal is what is left
     // outside that allowlist, not "anything that is not an image".
     expect((await post({ images: [{ mediaType: 'application/zip', data: 'AAAA' }] })).status).toBe(400);
+    const tooMany = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE + 1 }, () => ({ mediaType: 'image/png', data: 'AAAA' }));
+    expect((await post({ images: tooMany })).status).toBe(400);
+    expect(captured).toBeUndefined();
+  });
+
+  /** Telemetry 7054e5f2: five screenshots in one message were refused under the old cap of four. */
+  it('accepts five attachments, and refuses a set over the total size budget', async () => {
     const five = Array.from({ length: 5 }, () => ({ mediaType: 'image/png', data: 'AAAA' }));
-    expect((await post({ images: five })).status).toBe(400);
+    expect((await post({ images: five })).status).toBe(200);
+    captured = undefined;
+    const big = 'A'.repeat(MAX_ATTACHMENTS_TOTAL_BASE64 / 4 + 4);
+    const heavy = Array.from({ length: 4 }, () => ({ mediaType: 'image/png', data: big }));
+    expect((await post({ images: heavy })).status).toBe(400);
     expect(captured).toBeUndefined();
   });
 

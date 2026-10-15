@@ -4,6 +4,7 @@ import {
   attachmentMediaType,
   fileToPendingAttachment,
   MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS,
   screenFiles,
   toAttachmentInput,
 } from './composer-attachments'
@@ -13,7 +14,7 @@ import {
 const fakeFile = (over: { type?: string; size?: number; name?: string } = {}): File =>
   ({ type: 'image/png', size: 1024, name: 'shot.png', ...over }) as File
 
-describe('screenFiles — the legacy 4×5MB caps, mirrored from the server zod', () => {
+describe('screenFiles — the caps, mirrored from the server zod', () => {
   it('accepts images within the caps', () => {
     const intake = screenFiles([fakeFile(), fakeFile({ name: 'b.png' })], 0)
     expect(intake.accepted).toHaveLength(2)
@@ -66,10 +67,27 @@ describe('screenFiles — the legacy 4×5MB caps, mirrored from the server zod',
     expect(screenFiles([fakeFile({ size: MAX_ATTACHMENT_BYTES })], 0).accepted).toHaveLength(1)
   })
 
-  it('enforces the 4-attachment cap against what is already attached', () => {
-    const intake = screenFiles([fakeFile({ name: 'a.png' }), fakeFile({ name: 'b.png' })], 3)
+  /** Telemetry 7054e5f2: a fifth ordinary screenshot was refused under the old cap of four. */
+  it('takes a fifth screenshot', () => {
+    const intake = screenFiles([fakeFile({ name: 'e.png', size: 1024 * 1024 })], 4, 4 * 1024 * 1024)
     expect(intake.accepted).toHaveLength(1)
-    expect(intake.rejected).toEqual(['b.png skipped — max 4 attachments per message'])
+    expect(intake.rejected).toEqual([])
+  })
+
+  it('enforces the attachment-count cap against what is already attached', () => {
+    const intake = screenFiles([fakeFile({ name: 'a.png' }), fakeFile({ name: 'b.png' })], MAX_ATTACHMENTS - 1)
+    expect(intake.accepted).toHaveLength(1)
+    expect(intake.rejected).toEqual([`b.png skipped — max ${MAX_ATTACHMENTS} attachments per message`])
+  })
+
+  it('enforces the 20 MB total across what is already attached and the batch', () => {
+    const intake = screenFiles(
+      [fakeFile({ name: 'a.png', size: MAX_ATTACHMENT_BYTES }), fakeFile({ name: 'b.png', size: 2 })],
+      3,
+      3 * MAX_ATTACHMENT_BYTES - 1,
+    )
+    expect(intake.accepted.map((f) => f.name)).toEqual(['a.png'])
+    expect(intake.rejected).toEqual(['b.png skipped — max 20 MB of attachments per message'])
   })
 
   it('a batch mixing every failure mode reports each file by name', () => {

@@ -9,6 +9,7 @@ import { resetToasts, Toaster } from '@/components/ui/toaster'
 
 import {
   MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS,
   type AttachmentsChangeReason,
   type PendingAttachment,
 } from './composer-attachments'
@@ -238,13 +239,14 @@ describe('attachments — attach, paste, thumbnails, caps (legacy parity)', () =
     expect(screen.getByLabelText('Remove b.png')).toBeTruthy()
   })
 
-  it('a 5th image is refused with a toast naming it', async () => {
+  it('an image past the count cap is refused with a toast naming it', async () => {
     const { textarea } = renderComposer()
-    fireEvent.drop(textarea, { dataTransfer: { files: ['a', 'b', 'c', 'd'].map((n) => pngFile(`${n}.png`)) } })
-    await screen.findByLabelText('Remove d.png')
-    paste(textarea, [pngFile('e.png')])
-    expect(await screen.findByText('e.png skipped — max 4 attachments per message')).toBeTruthy()
-    expect(screen.queryByLabelText('Remove e.png')).toBeNull()
+    const names = Array.from({ length: MAX_ATTACHMENTS }, (_, i) => `${i}.png`)
+    fireEvent.drop(textarea, { dataTransfer: { files: names.map((n) => pngFile(n)) } })
+    await screen.findByLabelText(`Remove ${names.at(-1)}`)
+    paste(textarea, [pngFile('extra.png')])
+    expect(await screen.findByText(`extra.png skipped — max ${MAX_ATTACHMENTS} attachments per message`)).toBeTruthy()
+    expect(screen.queryByLabelText('Remove extra.png')).toBeNull()
   })
 
   /** #950 — the same road, for a file that has nothing to preview. */

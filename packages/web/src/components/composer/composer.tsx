@@ -31,6 +31,7 @@ import { isSubmitShortcut } from '@/lib/use-submit-shortcut'
 import { cn } from '@/lib/utils'
 
 import {
+  attachedBytes,
   fileToPendingAttachment,
   MAX_ATTACHMENTS,
   screenFiles,
@@ -344,7 +345,7 @@ export function Composer({
       // StrictMode double-invokes updater functions in dev, so screening here would encode and
       // append each pasted file twice (#double-paste). `imagesRef` gives the current count
       // without reading through state; each async append re-checks the cap functionally.
-      const intake = screenFiles(files, imagesRef.current.length)
+      const intake = screenFiles(files, imagesRef.current.length, attachedBytes(imagesRef.current))
       for (const reason of intake.rejected) toast(reason, { tone: 'danger' })
       for (const file of intake.accepted) {
         void fileToPendingAttachment(file, source).then((attachment) =>

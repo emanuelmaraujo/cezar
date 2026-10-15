@@ -9,6 +9,7 @@ import { attachmentLibraryDir, type RunManager } from '../workflows/run.ts';
 import { apiRequest } from './loopback-request.testkit.ts';
 import { connectedProviderAuth } from './provider-auth.testkit.ts';
 import { createApp } from './server.ts';
+import { MAX_ATTACHMENTS_PER_MESSAGE } from '@open-mercato/cezar-contract';
 
 /**
  * #472 — the queued prompt stack over HTTP: the three-rung delivery ladder on
@@ -197,7 +198,7 @@ describe('queued prompt stack routes (#472)', () => {
   it('rejects an over-cap image count across the stack', async () => {
     store.updateRun(record.id, {
       queuedMessages: [
-        { id: 'msg-1', text: 'with images', images: Array.from({ length: 7 }, (_, i) => `/i/${i}.png`), createdAt: 'x' },
+        { id: 'msg-1', text: 'with images', images: Array.from({ length: 2 * MAX_ATTACHMENTS_PER_MESSAGE - 1 }, (_, i) => `/i/${i}.png`), createdAt: 'x' },
       ],
     });
     const res = await post({
@@ -208,7 +209,7 @@ describe('queued prompt stack routes (#472)', () => {
       ],
     });
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toContain('8 attachment limit');
+    expect(((await res.json()) as { error: string }).error).toContain(`${2 * MAX_ATTACHMENTS_PER_MESSAGE} attachment limit`);
   });
 
   /**

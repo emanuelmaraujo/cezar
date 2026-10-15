@@ -63,7 +63,8 @@ import {
 // A contract VALUE, like `workspaceUiStateSchema` in workspace/migrations.ts — the request
 // schema this route validates with is the same one the client compiles against.
 import {
-  attachmentInputSchema,
+  attachmentListSchema,
+  MAX_ATTACHMENTS_PER_MESSAGE,
   modelDiscoveryRunnerSchema,
   openProjectInSchema,
   updateProjectInputSchema,
@@ -725,7 +726,7 @@ const startRunSchema = z
       .transform((s) => (s ? s : undefined)),
     // Attachments pasted into the new-task form — same shape and limits as a
     // live-session message; delivered with the first agent step's opening.
-    images: z.array(attachmentInputSchema).max(4).optional(),
+    images: attachmentListSchema.optional(),
     // Inbox follow-up (#374): the todo the composer was prefilled from
     // (`/new?skill=&ref=&todo=t1`). On a successful start the entry is marked
     // started — the same bookkeeping POST /api/todos/:id/start does, so the
@@ -927,13 +928,13 @@ const openInSchema = z.object({
   path: z.string().max(1_000).optional(),
 });
 
-// Attachment-carrying bodies validate with the CONTRACT's `attachmentInputSchema` (#950) —
+// Attachment-carrying bodies validate with the CONTRACT's `attachmentListSchema` (#950) —
 // images plus the short PDF/TXT/MD allowlist, ~5 MB each once base64-decoded. Imported rather
 // than mirrored here, so the wire cannot drift from what the cockpit compiles against.
 const messageSchema = z
   .object({
     text: z.string().max(100_000).default(''),
-    images: z.array(attachmentInputSchema).max(4).default([]),
+    images: attachmentListSchema.default([]),
   })
   .refine((m) => m.text.trim().length > 0 || m.images.length > 0, {
     message: 'message needs text or at least one attachment',
@@ -944,7 +945,7 @@ const messageSchema = z
 const queuedMessagePatchSchema = z
   .object({
     text: z.string().max(100_000).optional(),
-    images: z.array(attachmentInputSchema).max(4).optional(),
+    images: attachmentListSchema.optional(),
   })
   .refine((m) => m.text !== undefined || m.images !== undefined, {
     message: 'message edit needs text or attachments',
@@ -954,7 +955,7 @@ const queuedMessagePatchSchema = z
 // above; the one that actually matters is the FOLDED total, because 20 messages of
 // 100 000 chars each would otherwise compose a ~2 M-character {{task}}.
 const MAX_QUEUED_MESSAGES = 20;
-const MAX_QUEUED_ATTACHMENTS = 8;
+const MAX_QUEUED_ATTACHMENTS = 2 * MAX_ATTACHMENTS_PER_MESSAGE;
 const MAX_FOLDED_TASK_CHARS = 200_000;
 
 /** Length of the prompt a run would execute with — `task` plus its whole stack,
@@ -976,7 +977,7 @@ function foldedLength(task: string, stack: Array<{ text: string }>): number {
 // session rather than being silently dropped.
 const continueSchema = z.object({
   text: z.string().max(100_000, 'must be at most 100000 characters').optional(),
-  images: z.array(attachmentInputSchema).max(4).optional(),
+  images: attachmentListSchema.optional(),
   runner: z.enum(RUNNER_IDS).optional(),
   model: z.string().max(200).optional(),
   /** Agent account for the reopened session (spec 2026-07-29-agent-profiles). Bound mirrors
@@ -1022,8 +1023,8 @@ const pinSchema = z.object({
 });
 
 // Request-body size guards (#429). A generous global cap keeps a single
-// localhost request from being unbounded (the largest legit body is 4 pasted
-// images at ~7 MB base64 each); the ui-state PUT gets a much tighter cap since
+// localhost request from being unbounded (the largest legit body is one message's
+// attachments, ≤ MAX_ATTACHMENTS_TOTAL_BASE64 in total); the ui-state PUT gets a much tighter cap since
 // it only ever carries small GUI prefs.
 const GLOBAL_BODY_LIMIT = 32 * 1024 * 1024; // 32 MiB
 const UI_STATE_BODY_LIMIT = 128 * 1024; // 128 KiB
