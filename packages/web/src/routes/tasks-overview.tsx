@@ -27,10 +27,12 @@ import * as React from 'react'
 import { Virtualizer } from 'virtua'
 import { Link, useNavigate } from '@/lib/project-router'
 
-import { archiveFinished, markAllRunsSeen, patchRun } from '@/api/client'
+import { archiveFinished, archiveProjectRun, markAllRunsSeen, patchRun, setProjectRunRead } from '@/api/client'
 import { useRunUsage } from '@/api/global-events'
-import { queryKeys, useHealth, usePinRun, useReferenceProjectId, useRepo, useRuns, writePatchedRunToCaches } from '@/api/queries'
+import { queryKeys, useHealth, usePinRun, useReferenceProjectId, useRepo, useRuns, workspaceQueryKeys, writePatchedRunToCaches } from '@/api/queries'
 import type { RunRecord } from '@open-mercato/cezar-api-client'
+import { queryScope } from '@open-mercato/cezar-api-client'
+import { TaskQuickActions, TaskSelectionCheckbox, TasksSelectionToolbar, useTasksOverviewSelection, type TasksOverviewActionHandler } from './tasks-overview-actions'
 import { CenteredState } from '@/components/centered-state'
 import { FirstRun, SetupPill, WelcomeBack } from '@/components/first-run'
 import { DiffStatLabel } from '@/components/diff-stat'
@@ -131,6 +133,7 @@ export function TasksOverview({
   onMarkAllRead,
   onRename,
   onTogglePin,
+  onTaskAction,
   now,
   showTokens = true,
   showCost = true,
@@ -171,6 +174,7 @@ export function TasksOverview({
    *  for every surface at once — so the row's own control is also the only thing on this page
    *  that explains why one is up there. */
   onTogglePin?: (run: RunRecord, pinned: boolean) => void
+  onTaskAction?: TasksOverviewActionHandler
   /** Injected so the ages are not racing the clock in tests. */
   now?: number
   /** Presentation capability; defaults visible for older health responses and direct renders. */
@@ -259,6 +263,8 @@ export function TasksOverview({
       ]),
     [sections],
   )
+  const displayed = React.useMemo(() => sections.flatMap((section) => section.rows.map((node) => node.run)), [sections])
+  const selection = useTasksOverviewSelection(displayed, onTaskAction)
   // Positions come from the full list, never the filtered one: a search must not renumber the
   // queue the engine is actually going to drain.
   const positions = React.useMemo(() => queuePositions(all), [all])
@@ -361,6 +367,7 @@ export function TasksOverview({
             onSortByChange={setSortBy}
           />
         ) : null}
+        {onTaskAction ? <TasksSelectionToolbar displayed={displayed} selection={selection} archived={view === 'archived'} /> : null}
         {runs === undefined ? null : hasScheduledTasks && all.length === 0 ? <p className="text-sm text-muted-foreground">No tasks have started yet.</p> : visible.length === 0 ? (
           <TasksEmptyState
             view={view}
@@ -385,6 +392,7 @@ export function TasksOverview({
               <TooltipProvider>
                 <table className="w-full border-collapse" aria-rowcount={tableWindow.ariaRowCount}>
                   <colgroup>
+                    {onTaskAction ? <col style={{ width: '112px' }} /> : null}
                     {columns.map((column) => {
                       const expanded = isColumnExpanded(column.id, expandedColumns)
                       return (
@@ -399,6 +407,7 @@ export function TasksOverview({
                   </colgroup>
                   <thead>
                     <tr aria-rowindex={tableWindow.windowed ? 1 : undefined}>
+                      {onTaskAction ? <th scope="col"><span className="sr-only">Task controls</span></th> : null}
                       {columns.map((column) => (
                         <TaskColumnHeader
                           key={column.id}
@@ -411,7 +420,7 @@ export function TasksOverview({
                     </tr>
                   </thead>
                   <tbody ref={tableWindow.anchorRef} className="[&>tr:last-child>td]:border-b-0">
-                    <RowSpacer height={tableWindow.padTop} colSpan={columns.length} />
+                    <RowSpacer height={tableWindow.padTop} colSpan={columns.length + (onTaskAction ? 1 : 0)} />
                     {items.slice(tableWindow.start, tableWindow.end).map((item, index) =>
                       item.kind === 'section' ? (
                         <tr
@@ -423,7 +432,7 @@ export function TasksOverview({
                         >
                           <th
                             scope="rowgroup"
-                            colSpan={columns.length}
+                            colSpan={columns.length + (onTaskAction ? 1 : 0)}
                             className={cn(SECTION_LABEL_CLASS, 'border-b border-border bg-muted/40 px-3.5 py-1.5 text-left')}
                           >
                             {item.section.label} · {item.section.taskCount}
@@ -444,12 +453,17 @@ export function TasksOverview({
                         }
                         onRename={onRename}
                         onTogglePin={pinToggle}
+                        selectable={!!onTaskAction}
+                        selected={selection.ids.has(item.node.run.id)}
+                        onSelect={selection.toggle}
+                        actionsBusy={selection.busy}
+                        onAction={selection.apply}
                         sortBy={sortBy}
                         columns={columns}
                         expandedColumns={expandedColumns}
                       />
                     ))}
-                    <RowSpacer height={tableWindow.padBottom} colSpan={columns.length} />
+                    <RowSpacer height={tableWindow.padBottom} colSpan={columns.length + (onTaskAction ? 1 : 0)} />
                   </tbody>
                 </table>
               </TooltipProvider>
@@ -482,6 +496,11 @@ export function TasksOverview({
                   showTokens={showTokens}
                   showCost={showCost}
                   onTogglePin={pinToggle}
+                  selectable={!!onTaskAction}
+                  selected={selection.ids.has(item.node.run.id)}
+                  onSelect={selection.toggle}
+                  actionsBusy={selection.busy}
+                  onAction={selection.apply}
                   gitRepo={gitRepo}
                 />
               ))}
@@ -974,6 +993,7 @@ const TableRow = React.memo(function TableRow({
   sortBy,
   columns,
   expandedColumns,
+  selectable, selected, onSelect, actionsBusy, onAction,
 }: {
   ariaRowIndex?: number
   run: RunRecord
@@ -991,6 +1011,11 @@ const TableRow = React.memo(function TableRow({
   columns: readonly TaskColumnDefinition[]
   expandedColumns: NormalizedExpandedColumns
   gitRepo: boolean
+  selectable: boolean
+  selected: boolean
+  onSelect: (id: string) => void
+  actionsBusy: boolean
+  onAction: ReturnType<typeof useTasksOverviewSelection>['apply']
 }) {
   const navigate = useNavigate()
   const attention = deriveAttention(run)
@@ -1013,6 +1038,10 @@ const TableRow = React.memo(function TableRow({
       }}
       className="group/row cursor-pointer hover:bg-muted"
     >
+      {selectable ? <td className="border-b border-border px-2"><span className="inline-flex items-center gap-1">
+        <TaskSelectionCheckbox label={`Select ${runTitle(run)}`} checked={selected} disabled={actionsBusy} onChange={() => onSelect(run.id)} />
+        <TaskQuickActions run={run} busy={actionsBusy} onAction={onAction} />
+      </span></td> : null}
       {columns.map((column) => {
         if (column.id === 'memory') return null
         if (column.id === 'cpu') {
@@ -1370,6 +1399,7 @@ const TaskCard = React.memo(function TaskCard({
   showCost,
   onTogglePin,
   gitRepo,
+  selectable, selected, onSelect, actionsBusy, onAction,
 }: {
   run: RunRecord
   /** Nesting level under the task that dispatched this one; 0 for a top-level card. */
@@ -1384,6 +1414,11 @@ const TaskCard = React.memo(function TaskCard({
   showCost: boolean
   onTogglePin?: (run: RunRecord, pinned: boolean) => void
   gitRepo: boolean
+  selectable: boolean
+  selected: boolean
+  onSelect: (id: string) => void
+  actionsBusy: boolean
+  onAction: ReturnType<typeof useTasksOverviewSelection>['apply']
 }) {
   const navigate = useNavigate()
   const attention = deriveAttention(run)
@@ -1409,12 +1444,14 @@ const TaskCard = React.memo(function TaskCard({
       onClick={(event) => {
         // `button` as well as `a` since the card grew the pin (#935): a control inside the card
         // owns its own click, exactly as the desktop row has always had it.
-        if ((event.target as Element).closest('a, button')) return
+        if ((event.target as Element).closest('a, button, input')) return
         navigate(to)
       }}
       className="cursor-pointer rounded-lg border border-border bg-card px-3.5 py-3 shadow-xs"
     >
       <div className="flex items-start gap-2.5">
+        {selectable ? <TaskSelectionCheckbox label={`Select ${runTitle(run)}`} checked={selected}
+          disabled={actionsBusy} onChange={() => onSelect(run.id)} /> : null}
         <Pill dot={attention.tone} pulse={attention.pulse} className="mt-px shrink-0" title={scheduled?.title}>
           {attention.label}
           {scheduled ? <span className="tabular-nums">{scheduled.label}</span> : null}
@@ -1505,6 +1542,7 @@ const TaskCard = React.memo(function TaskCard({
         {reference ? (
           <TaskReferenceChip run={run} reference={reference} className="h-5" />
         ) : null}
+        {selectable ? <TaskQuickActions run={run} busy={actionsBusy} onAction={onAction} /> : null}
       </div>
     </div>
   )
@@ -1565,6 +1603,16 @@ export function TasksOverviewRoute() {
   const gitRepo = repo.data ? repo.data.info !== null : true
   const [view, setView] = useListView()
   const queryClient = useQueryClient()
+  const actionScope = queryScope()
+  const onTaskAction = React.useCallback<TasksOverviewActionHandler>(async (run, action) => {
+    // Explicit scope stays pinned across project navigation during a selected-row batch (#1599).
+    const updated = action === 'archive' || action === 'restore'
+      ? await archiveProjectRun(actionScope, run.id, action === 'archive', 'tasks_table')
+      : await setProjectRunRead(actionScope, run.id, action === 'read')
+    if (queryScope() === actionScope) writePatchedRunToCaches(queryClient, updated)
+    else void queryClient.invalidateQueries({ queryKey: workspaceQueryKeys.runsIndex })
+    void queryClient.invalidateQueries({ queryKey: [actionScope, 'runs'] })
+  }, [actionScope, queryClient])
   const archive = useMutation({
     mutationFn: archiveFinished,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.runs.all }),
@@ -1651,6 +1699,7 @@ export function TasksOverviewRoute() {
         onMarkAllRead={() => markAllRead.mutate()}
         onRename={onRename}
         onTogglePin={onTogglePin}
+        onTaskAction={onTaskAction}
         showTokens={metricVisibility.tokens}
         showCost={metricVisibility.cost}
         expandedColumns={taskTableColumns.expandedColumns}
